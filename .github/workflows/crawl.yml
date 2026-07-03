@@ -2,10 +2,8 @@ name: FSS crawl & Notion sync
 
 on:
   schedule:
-    # 매일 07:30 KST  (= 22:30 UTC 전날)
-    - cron: "30 22 * * *"
-    # 매일 19:30 KST  (= 10:30 UTC)
-    - cron: "30 10 * * *"
+    # 매 4시간 (KST) — 07:30 / 11:30 / 15:30 / 19:30 / 23:30 / 03:30
+    - cron: "30 22,2,6,10,14,18 * * *"
   workflow_dispatch: {}
 
 concurrency:
