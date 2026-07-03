@@ -90,8 +90,24 @@ def build_page(post: dict, now_iso: str) -> dict:
     return props
 
 
-def fetch_existing_pages(notion: Client, db_id: str) -> dict[str, dict]:
-    """Notion DB의 모든 페이지를 nttId 키로 스냅샷 로드.
+def get_data_source_id(notion: Client, database_id: str) -> str:
+    """Notion API 2025-09-03: DB → data source ID 로 조회.
+
+    최신 notion-client(2.4+)에서 databases.query 가 제거되고 data_sources.query
+    로 이관됐다. 이 함수는 DB의 첫 번째 data source id 를 반환한다.
+    """
+    db = notion.databases.retrieve(database_id=database_id)
+    data_sources = db.get("data_sources") or []
+    if not data_sources:
+        raise RuntimeError(
+            f"database {database_id}에 data source 없음. "
+            "Notion API 2025-09-03 migration 확인 필요."
+        )
+    return data_sources[0]["id"]
+
+
+def fetch_existing_pages(notion: Client, ds_id: str) -> dict[str, dict]:
+    """Data source의 모든 페이지를 nttId 키로 스냅샷 로드.
 
     nttId가 비어있는 페이지는 원문 링크에서 nttId를 파싱해 즉시 backfill한다
     (기존에 수동으로 넣어둔 페이지 호환용).
@@ -101,10 +117,10 @@ def fetch_existing_pages(notion: Client, db_id: str) -> dict[str, dict]:
     cursor = None
 
     while True:
-        payload = {"database_id": db_id, "page_size": 100}
+        payload = {"data_source_id": ds_id, "page_size": 100}
         if cursor:
             payload["start_cursor"] = cursor
-        resp = notion.databases.query(**payload)
+        resp = notion.data_sources.query(**payload)
 
         for page in resp.get("results", []):
             props = page.get("properties", {})
@@ -183,13 +199,13 @@ def build_update_props(post: dict, snap: dict, now_dt: datetime) -> dict:
 
 
 def push_new_posts(
-    notion: Client, db_id: str, posts: list[dict], now_iso: str
+    notion: Client, ds_id: str, posts: list[dict], now_iso: str
 ) -> tuple[int, int]:
     added, failed = 0, 0
     for i, post in enumerate(posts, 1):
         try:
             notion.pages.create(
-                parent={"database_id": db_id},
+                parent={"data_source_id": ds_id},
                 properties=build_page(post, now_iso),
             )
             added += 1

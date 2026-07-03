@@ -26,6 +26,7 @@ from sync_notion import (
     build_update_props,
     compute_summary_stats,
     fetch_existing_pages,
+    get_data_source_id,
     project_pages_map,
     push_new_posts,
     unmark_stale_new,
@@ -49,8 +50,9 @@ def main() -> int:
     now_iso = now_dt.isoformat(timespec="seconds")
 
     print("→ Notion DB 스냅샷 로드")
-    pages_map = fetch_existing_pages(notion, db_id)
-    print(f"  기존 {len(pages_map)}건")
+    ds_id = get_data_source_id(notion, db_id)
+    pages_map = fetch_existing_pages(notion, ds_id)
+    print(f"  기존 {len(pages_map)}건 (data_source={ds_id[:8]}…)")
 
     print("→ FSS 보도자료 크롤")
     posts = crawler.fetch_all()
@@ -73,7 +75,7 @@ def main() -> int:
 
     print(f"→ 신규 {len(new_posts)}건 · 업데이트 {len(updates)}건")
 
-    added, add_fail = push_new_posts(notion, db_id, new_posts, now_iso)
+    added, add_fail = push_new_posts(notion, ds_id, new_posts, now_iso)
     updated, upd_fail = apply_updates(notion, updates)
     unmarked, un_fail, unmarked_ntt_ids = unmark_stale_new(
         notion, pages_map, now_dt, crawled_ntt_ids
