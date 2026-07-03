@@ -34,7 +34,26 @@
    | 신규 | 크롤에서 나온 nttId가 스냅샷에 없음 | `pages.create` + `신규=true` + `최초수집=now` |
    | 업데이트 | 스냅샷에 있으나 조회수/제목/부서/등록일/신규창구 중 하나라도 변경 | `pages.update` 로 변경 필드만 patch |
    | 오래된 신규 해제 | 이번 크롤에 안 잡힌 페이지 중 `신규=true`이고 `first_seen + 24h < now` | `신규=false` |
-4. 로그에 `추가 N · 업데이트 M · 신규해제 K · 실패 F · Notion 누적 T건` 요약
+4. **Summary page 갱신** — `NOTION_SUMMARY_PAGE_ID` 설정 & 변경 발생 시, [Crawler_FSS 페이지](https://juhwani.notion.site/Crawler_FSS-3920f4111b53805a9a5adf7c05e165e3)의 sentinel 사이 블록을 최신 통계로 교체 (아래 참조)
+5. 로그에 `추가 N · 업데이트 M · 신규해제 K · 실패 F · Notion 누적 T건` 요약
+
+## Crawler_FSS 요약 페이지 갱신
+
+Notion 페이지의 **두 sentinel heading** 사이 블록만 매 sync마다 자동 교체된다. 하위 데이터베이스(`FSS 보도자료 DB`)와 사용자가 수동 추가한 콘텐츠는 sentinel 밖에 두면 안전.
+
+- 시작 sentinel: `📊 자동 갱신 통계`
+- 끝 sentinel: `🔒 자동 갱신 영역 끝`
+- 보호되는 블록 타입 (sentinel 안이라도 삭제 안 됨): `child_database`, `child_page`, `link_to_page`
+
+**첫 실행 시**: sentinel이 없으면 페이지 끝에 sentinel 쌍 + 통계 블록을 자동 부착 (`mode=init`). 이후 원하는 위치로 sentinel을 드래그해도 되고, 자동 유지된다.
+
+**이후 실행**: sentinel 사이의 paragraph/list/heading 블록을 삭제하고 새 통계로 교체 (`mode=refresh`).
+
+**통계 내용**:
+- ⏱ 동기화 시각 (KST)
+- 📄 총 게시글 · 🆕 최근 24h 신규
+- 📅 최근 등록일 · 🏢 담당부서 수
+- 담당부서별 건수 (많은 순)
 
 ## Notion DB 스키마
 
@@ -56,12 +75,13 @@
 
 저장소 `Settings → Secrets and variables → Actions` 에서 등록:
 
-| Name | Value |
-|---|---|
-| `NOTION_TOKEN` | Notion Integration secret (`ntn_...`) — crawler_news 저장소와 동일 값 재사용 가능 |
-| `NOTION_DB_ID` | `FSS 보도자료 DB`의 database ID |
+| Name | 필수 | Value |
+|---|---|---|
+| `NOTION_TOKEN` | ✅ | Notion Integration secret (`ntn_...`) — crawler_news 저장소와 동일 값 재사용 가능 |
+| `NOTION_DB_ID` | ✅ | `FSS 보도자료 DB`의 database ID |
+| `NOTION_SUMMARY_PAGE_ID` | ⏸ 선택 | `Crawler_FSS` 페이지 ID — 설정 시 매 sync에서 요약 통계 자동 갱신 |
 
-> Integration이 해당 DB에 연결되어 있어야 한다: Notion `FSS 보도자료 DB` 페이지 → `···` → `Connections` → Integration 추가.
+> Integration이 대상 DB **그리고** 요약 페이지에 각각 연결되어 있어야 한다: 각 페이지 → `···` → `Connections` → Integration 추가.
 
 ## 로컬 테스트
 ```powershell
@@ -69,6 +89,7 @@ cd fss_monitor
 pip install -r requirements.txt
 $env:NOTION_TOKEN = "ntn_..."
 $env:NOTION_DB_ID = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+$env:NOTION_SUMMARY_PAGE_ID = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"   # optional
 python run_headless.py
 ```
 

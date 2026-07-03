@@ -6,6 +6,10 @@ from notion_client import Client
 
 from config import NEW_BADGE_HOURS, NOTION_PROPS, NOTION_RATE_DELAY
 
+SUMMARY_SENTINEL_START = "📊 자동 갱신 통계"
+SUMMARY_SENTINEL_END = "🔒 자동 갱신 영역 끝"
+PROTECTED_BLOCK_TYPES = {"child_database", "child_page", "link_to_page"}
+
 
 class NotionTokenMissing(RuntimeError):
     pass
@@ -217,10 +221,14 @@ def apply_updates(
 
 def unmark_stale_new(
     notion: Client, pages_map: dict[str, dict], now_dt: datetime, exclude_ntt_ids: set[str]
-) -> tuple[int, int]:
-    """이번 크롤에 안 잡힌 페이지 중 신규=True인데 24h 지난 것은 신규=False."""
+) -> tuple[int, int, set[str]]:
+    """이번 크롤에 안 잡힌 페이지 중 신규=True인데 24h 지난 것은 신규=False.
+
+    반환: (unmarked_count, failed_count, unmarked_ntt_ids)
+    """
     p = NOTION_PROPS
     unmarked, failed = 0, 0
+    unmarked_ntt_ids: set[str] = set()
     for ntt_id, snap in pages_map.items():
         if ntt_id in exclude_ntt_ids:
             continue
@@ -234,9 +242,206 @@ def unmark_stale_new(
                 properties={p["is_new"]: {"checkbox": False}},
             )
             unmarked += 1
+            unmarked_ntt_ids.add(ntt_id)
             print(f"  [-new] {(snap.get('title') or '')[:40]}")
         except Exception as e:
             failed += 1
             print(f"  실패 [{ntt_id}]: {e}")
         time.sleep(NOTION_RATE_DELAY)
-    return unmarked, failed
+    return unmarked, failed, unmarked_ntt_ids
+
+
+# ---------------------------------------------------------------------------
+# Summary page (Crawler_FSS) — sentinel 기반 자동 갱신
+# ---------------------------------------------------------------------------
+
+
+def _extract_heading_text(block: dict) -> str | None:
+    t = block.get("type")
+    if t not in ("heading_1", "heading_2", "heading_3"):
+        return None
+    rt = block.get(t, {}).get("rich_text") or []
+    return "".join(x.get("plain_text") or "" for x in rt).strip()
+
+
+def _list_page_top_blocks(notion: Client, page_id: str) -> list[dict]:
+    blocks: list[dict] = []
+    cursor = None
+    while True:
+        payload = {"block_id": page_id, "page_size": 100}
+        if cursor:
+            payload["start_cursor"] = cursor
+        resp = notion.blocks.children.list(**payload)
+        blocks.extend(resp.get("results", []))
+        if not resp.get("has_more"):
+            break
+        cursor = resp.get("next_cursor")
+    return blocks
+
+
+def project_pages_map(
+    pages_map: dict[str, dict],
+    new_posts: list[dict],
+    updates: list[tuple[str, dict, str, str]],
+    unmarked_ntt_ids: set[str],
+    now_dt: datetime,
+    now_iso: str,
+) -> dict[str, dict]:
+    """이번 sync 이후의 pages_map 상태를 시뮬레이트. 통계 계산용."""
+    p = NOTION_PROPS
+    projected: dict[str, dict] = {k: dict(v) for k, v in pages_map.items()}
+
+    for post in new_posts:
+        projected[post["ntt_id"]] = {
+            "title": post.get("title") or "",
+            "department": post.get("department") or "",
+            "view_count": _to_int(post.get("view_count")),
+            "posted_date": post.get("posted_date") or "",
+            "is_new": True,
+            "first_seen": now_iso,
+        }
+
+    for _pid, patch, ntt_id, _title in updates:
+        snap = projected.get(ntt_id)
+        if not snap:
+            continue
+        if p["view_count"] in patch:
+            snap["view_count"] = patch[p["view_count"]]["number"]
+        if p["is_new"] in patch:
+            snap["is_new"] = patch[p["is_new"]]["checkbox"]
+        if p["title"] in patch:
+            snap["title"] = "".join(
+                t["text"]["content"] for t in patch[p["title"]]["title"]
+            )
+        if p["department"] in patch:
+            snap["department"] = "".join(
+                t["text"]["content"] for t in patch[p["department"]]["rich_text"]
+            )
+        if p["posted_date"] in patch:
+            snap["posted_date"] = patch[p["posted_date"]]["date"]["start"]
+
+    for ntt_id in unmarked_ntt_ids:
+        if ntt_id in projected:
+            projected[ntt_id]["is_new"] = False
+
+    # 안전장치: 24h 창구로 is_new 최종 재판정 (create/update가 놓친 경우 대비)
+    for snap in projected.values():
+        if snap.get("first_seen"):
+            snap["is_new"] = _is_within_new_window(snap["first_seen"], now_dt)
+
+    return projected
+
+
+def compute_summary_stats(pages_map: dict[str, dict], now_dt: datetime) -> dict:
+    total = len(pages_map)
+    new_count = 0
+    latest_posted = ""
+    dept_counter: dict[str, int] = {}
+    for snap in pages_map.values():
+        if snap.get("is_new"):
+            new_count += 1
+        pd = snap.get("posted_date") or ""
+        if pd > latest_posted:
+            latest_posted = pd
+        dept = (snap.get("department") or "").strip()
+        if dept:
+            dept_counter[dept] = dept_counter.get(dept, 0) + 1
+    return {
+        "sync_time": now_dt.strftime("%Y-%m-%d %H:%M:%S"),
+        "total": total,
+        "new_count": new_count,
+        "latest_posted": latest_posted or "—",
+        "dept_count": len(dept_counter),
+        "dept_breakdown": sorted(dept_counter.items(), key=lambda x: (-x[1], x[0])),
+    }
+
+
+def _text_block(kind: str, text: str) -> dict:
+    return {
+        "object": "block",
+        "type": kind,
+        kind: {"rich_text": [{"type": "text", "text": {"content": text}}]},
+    }
+
+
+def _build_summary_blocks(stats: dict) -> list[dict]:
+    blocks = [
+        _text_block("paragraph", f"⏱ 동기화 시각: {stats['sync_time']} KST"),
+        _text_block(
+            "paragraph",
+            f"📄 총 게시글: {stats['total']}건   ·   🆕 최근 24h 신규: {stats['new_count']}건",
+        ),
+        _text_block(
+            "paragraph",
+            f"📅 최근 등록일: {stats['latest_posted']}   ·   🏢 담당부서 수: {stats['dept_count']}곳",
+        ),
+        _text_block("heading_3", "담당부서별 건수"),
+    ]
+    for dept, cnt in stats["dept_breakdown"]:
+        blocks.append(_text_block("bulleted_list_item", f"{cnt}건 — {dept}"))
+    return blocks
+
+
+def update_summary_page(notion: Client, page_id: str, stats: dict) -> dict:
+    """Sentinel(📊/🔒) 사이 블록을 새 통계로 교체.
+
+    - 두 sentinel이 존재 → 사이 블록 삭제 (child_database 등은 보호) 후 fresh 삽입
+    - 없으면 페이지 끝에 sentinel + 통계 부착 (init 모드)
+    """
+    blocks = _list_page_top_blocks(notion, page_id)
+
+    start_idx: int | None = None
+    end_idx: int | None = None
+    for i, b in enumerate(blocks):
+        heading = _extract_heading_text(b)
+        if heading == SUMMARY_SENTINEL_START:
+            start_idx = i
+        elif heading == SUMMARY_SENTINEL_END and start_idx is not None:
+            end_idx = i
+            break
+
+    fresh_content = _build_summary_blocks(stats)
+
+    if start_idx is not None and end_idx is not None and end_idx > start_idx:
+        deleted = 0
+        skipped_protected = 0
+        for b in blocks[start_idx + 1 : end_idx]:
+            if b.get("type") in PROTECTED_BLOCK_TYPES:
+                skipped_protected += 1
+                continue
+            try:
+                notion.blocks.delete(block_id=b["id"])
+                deleted += 1
+            except Exception as e:
+                print(f"  summary 블록 삭제 실패: {e}")
+            time.sleep(NOTION_RATE_DELAY)
+
+        try:
+            notion.blocks.children.append(
+                block_id=page_id,
+                children=fresh_content,
+                after=blocks[start_idx]["id"],
+            )
+            added = len(fresh_content)
+        except Exception as e:
+            print(f"  summary content 추가 실패: {e}")
+            added = 0
+        return {
+            "mode": "refresh",
+            "deleted": deleted,
+            "added": added,
+            "protected": skipped_protected,
+        }
+
+    # init: sentinel + 통계 부착
+    init_children = (
+        [_text_block("heading_2", SUMMARY_SENTINEL_START)]
+        + fresh_content
+        + [_text_block("heading_2", SUMMARY_SENTINEL_END)]
+    )
+    try:
+        notion.blocks.children.append(block_id=page_id, children=init_children)
+    except Exception as e:
+        print(f"  summary init 실패: {e}")
+        return {"mode": "init", "added": 0, "error": str(e)}
+    return {"mode": "init", "added": len(init_children)}

@@ -8,6 +8,8 @@
        - 신규 (nttId 없음)             → pages.create + 신규=True + 최초수집=now
        - 기존 & 변경 있음               → pages.update (변경 필드만; view_count/title/…, 신규 24h 창구)
        - 이번 크롤에 없는 기존 페이지    → 신규=True이고 first_seen+24h 지났으면 신규=False
+  4. NOTION_SUMMARY_PAGE_ID 설정 시: Crawler_FSS 페이지의 sentinel 블록 사이를
+     동기화 시각/총 게시글/신규 건수/담당부서별 통계로 교체.
 
 로컬 SQLite 캐시 없음. dedup은 매 실행마다 Notion을 조회.
 """
@@ -22,9 +24,12 @@ from sync_notion import (
     NotionTokenMissing,
     apply_updates,
     build_update_props,
+    compute_summary_stats,
     fetch_existing_pages,
+    project_pages_map,
     push_new_posts,
     unmark_stale_new,
+    update_summary_page,
 )
 
 KST = timezone(timedelta(hours=9))
@@ -33,6 +38,7 @@ KST = timezone(timedelta(hours=9))
 def main() -> int:
     token = os.environ.get("NOTION_TOKEN")
     db_id = os.environ.get("NOTION_DB_ID")
+    summary_page_id = os.environ.get("NOTION_SUMMARY_PAGE_ID")
     if not token:
         raise NotionTokenMissing("NOTION_TOKEN 환경변수 미설정")
     if not db_id:
@@ -69,13 +75,39 @@ def main() -> int:
 
     added, add_fail = push_new_posts(notion, db_id, new_posts, now_iso)
     updated, upd_fail = apply_updates(notion, updates)
-    unmarked, un_fail = unmark_stale_new(notion, pages_map, now_dt, crawled_ntt_ids)
+    unmarked, un_fail, unmarked_ntt_ids = unmark_stale_new(
+        notion, pages_map, now_dt, crawled_ntt_ids
+    )
 
     total_fail = add_fail + upd_fail + un_fail
+    changed = added + updated + unmarked
     print(
         f"완료 — 추가 {added} · 업데이트 {updated} · 신규해제 {unmarked} "
         f"· 실패 {total_fail} · Notion 누적 {len(pages_map) + added}건"
     )
+
+    # ------- Summary page 갱신 -------
+    if summary_page_id:
+        if changed == 0:
+            print("→ 변경 없음, summary 페이지 skip")
+        else:
+            print("→ Crawler_FSS 요약 페이지 갱신")
+            projected = project_pages_map(
+                pages_map, new_posts, updates, unmarked_ntt_ids, now_dt, now_iso
+            )
+            stats = compute_summary_stats(projected, now_dt)
+            try:
+                r = update_summary_page(notion, summary_page_id, stats)
+                print(
+                    f"  mode={r.get('mode')} deleted={r.get('deleted', 0)} "
+                    f"added={r.get('added', 0)} protected={r.get('protected', 0)}"
+                )
+            except Exception as e:
+                print(f"  summary 갱신 실패: {e}")
+                total_fail += 1
+    else:
+        print("→ NOTION_SUMMARY_PAGE_ID 미설정, summary 갱신 skip")
+
     return 0 if total_fail == 0 else 2
 
 

@@ -32,4 +32,5 @@ jobs:
         env:
           NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
           NOTION_DB_ID: ${{ secrets.NOTION_DB_ID }}
+          NOTION_SUMMARY_PAGE_ID: ${{ secrets.NOTION_SUMMARY_PAGE_ID }}
         run: python run_headless.py
