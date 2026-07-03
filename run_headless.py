@@ -36,10 +36,19 @@ from sync_notion import (
 KST = timezone(timedelta(hours=9))
 
 
+def _clean_env(name: str) -> str | None:
+    """env 값의 앞뒤 공백/개행 제거. 빈 문자열이면 None."""
+    v = os.environ.get(name)
+    if v is None:
+        return None
+    v = v.strip()
+    return v or None
+
+
 def main() -> int:
-    token = os.environ.get("NOTION_TOKEN")
-    db_id = os.environ.get("NOTION_DB_ID")
-    summary_page_id = os.environ.get("NOTION_SUMMARY_PAGE_ID")
+    token = _clean_env("NOTION_TOKEN")
+    db_id = _clean_env("NOTION_DB_ID")
+    summary_page_id = _clean_env("NOTION_SUMMARY_PAGE_ID")
     if not token:
         raise NotionTokenMissing("NOTION_TOKEN 환경변수 미설정")
     if not db_id:
