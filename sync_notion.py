@@ -198,23 +198,62 @@ def build_update_props(post: dict, snap: dict, now_dt: datetime) -> dict:
     return patch
 
 
+def _post_new_page_mention(
+    notion: Client, page_id: str, user_id: str, title: str, department: str
+) -> None:
+    """새로 push된 페이지에 mention 코멘트 작성.
+
+    형식: `@Juhwan Lee {title} | {department} | 새글 업데이트 확인 필요`
+    """
+    body = f" {title} | {department} | 새글 업데이트 확인 필요"
+    notion.comments.create(
+        parent={"page_id": page_id},
+        rich_text=[
+            {"type": "mention", "mention": {"type": "user", "user": {"id": user_id}}},
+            {"type": "text", "text": {"content": body}},
+        ],
+    )
+
+
 def push_new_posts(
-    notion: Client, ds_id: str, posts: list[dict], now_iso: str
-) -> tuple[int, int]:
+    notion: Client,
+    ds_id: str,
+    posts: list[dict],
+    now_iso: str,
+    mention_user_id: str | None = None,
+) -> tuple[int, int, int, int]:
+    """반환: (added, add_fail, mention_ok, mention_fail)"""
     added, failed = 0, 0
+    mention_ok, mention_fail = 0, 0
     for i, post in enumerate(posts, 1):
         try:
-            notion.pages.create(
+            new_page = notion.pages.create(
                 parent={"data_source_id": ds_id},
                 properties=build_page(post, now_iso),
             )
             added += 1
-            print(f"  [new {i}/{len(posts)}] {(post.get('title') or '')[:50]}")
+            title = post.get("title") or ""
+            print(f"  [new {i}/{len(posts)}] {title[:50]}")
+
+            if mention_user_id:
+                try:
+                    _post_new_page_mention(
+                        notion,
+                        new_page["id"],
+                        mention_user_id,
+                        title,
+                        post.get("department") or "",
+                    )
+                    mention_ok += 1
+                except Exception as e:
+                    mention_fail += 1
+                    print(f"    mention 실패: {e}")
+                time.sleep(NOTION_RATE_DELAY)
         except Exception as e:
             failed += 1
             print(f"  실패 [{post.get('ntt_id')}] {(post.get('title') or '')[:40]}: {e}")
         time.sleep(NOTION_RATE_DELAY)
-    return added, failed
+    return added, failed, mention_ok, mention_fail
 
 
 def apply_updates(

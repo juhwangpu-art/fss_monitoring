@@ -49,6 +49,7 @@ def main() -> int:
     token = _clean_env("NOTION_TOKEN")
     db_id = _clean_env("NOTION_DB_ID")
     summary_page_id = _clean_env("NOTION_SUMMARY_PAGE_ID")
+    mention_user_id = _clean_env("NOTION_MENTION_USER_ID")
     if not token:
         raise NotionTokenMissing("NOTION_TOKEN 환경변수 미설정")
     if not db_id:
@@ -84,17 +85,23 @@ def main() -> int:
 
     print(f"→ 신규 {len(new_posts)}건 · 업데이트 {len(updates)}건")
 
-    added, add_fail = push_new_posts(notion, ds_id, new_posts, now_iso)
+    added, add_fail, mention_ok, mention_fail = push_new_posts(
+        notion, ds_id, new_posts, now_iso, mention_user_id=mention_user_id
+    )
     updated, upd_fail = apply_updates(notion, updates)
     unmarked, un_fail, unmarked_ntt_ids = unmark_stale_new(
         notion, pages_map, now_dt, crawled_ntt_ids
     )
 
-    total_fail = add_fail + upd_fail + un_fail
+    total_fail = add_fail + upd_fail + un_fail + mention_fail
     changed = added + updated + unmarked
+    mention_note = (
+        f" · 멘션 {mention_ok}" if mention_user_id else " · 멘션 skip"
+    )
     print(
-        f"완료 — 추가 {added} · 업데이트 {updated} · 신규해제 {unmarked} "
-        f"· 실패 {total_fail} · Notion 누적 {len(pages_map) + added}건"
+        f"완료 — 추가 {added} · 업데이트 {updated} · 신규해제 {unmarked}"
+        f"{mention_note}"
+        f" · 실패 {total_fail} · Notion 누적 {len(pages_map) + added}건"
     )
 
     # ------- Summary page 갱신 -------

@@ -34,8 +34,10 @@
    | 신규 | 크롤에서 나온 nttId가 스냅샷에 없음 | `pages.create` + `신규=true` + `최초수집=now` |
    | 업데이트 | 스냅샷에 있으나 조회수/제목/부서/등록일/신규창구 중 하나라도 변경 | `pages.update` 로 변경 필드만 patch |
    | 오래된 신규 해제 | 이번 크롤에 안 잡힌 페이지 중 `신규=true`이고 `first_seen + 24h < now` | `신규=false` |
-4. **Summary page 갱신** — `NOTION_SUMMARY_PAGE_ID` 설정 & 변경 발생 시, [Crawler_FSS 페이지](https://juhwani.notion.site/Crawler_FSS-3920f4111b53805a9a5adf7c05e165e3)의 sentinel 사이 블록을 최신 통계로 교체 (아래 참조)
-5. 로그에 `추가 N · 업데이트 M · 신규해제 K · 실패 F · Notion 누적 T건` 요약
+4. **신규 push 시 mention 코멘트** — `NOTION_MENTION_USER_ID` 설정 시, 각 신규 페이지에 아래 형식으로 자동 코멘트 작성:
+   `@Juhwan Lee {제목} | {담당부서} | 새글 업데이트 확인 필요`
+5. **Summary page 갱신** — `NOTION_SUMMARY_PAGE_ID` 설정 & 변경 발생 시, [Crawler_FSS 페이지](https://juhwani.notion.site/Crawler_FSS-3920f4111b53805a9a5adf7c05e165e3)의 sentinel 사이 블록을 최신 통계로 교체 (아래 참조)
+6. 로그에 `추가 N · 업데이트 M · 신규해제 K · 멘션 X · 실패 F · Notion 누적 T건` 요약
 
 ## Crawler_FSS 요약 페이지 갱신
 
@@ -80,6 +82,7 @@ Notion 페이지의 **두 sentinel heading** 사이 블록만 매 sync마다 자
 | `NOTION_TOKEN` | ✅ | Notion Integration secret (`ntn_...`) — crawler_news 저장소와 동일 값 재사용 가능 |
 | `NOTION_DB_ID` | ✅ | `FSS 보도자료 DB`의 database ID |
 | `NOTION_SUMMARY_PAGE_ID` | ⏸ 선택 | `Crawler_FSS` 페이지 ID — 설정 시 매 sync에서 요약 통계 자동 갱신 |
+| `NOTION_MENTION_USER_ID` | ⏸ 선택 | Notion 사용자 UUID — 설정 시 신규 push된 페이지마다 해당 사용자에게 `@mention` 코멘트 자동 작성 |
 
 > Integration이 대상 DB **그리고** 요약 페이지에 각각 연결되어 있어야 한다: 각 페이지 → `···` → `Connections` → Integration 추가.
 
