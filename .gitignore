@@ -9,3 +9,9 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+
+# Claude Code 세션 컨텍스트 — Google Drive 로만 sync, git에는 넣지 않음
+# (Notion IDs · email · integration 이름 등 개인정보 포함)
+CLAUDE.md
+CLAUDE.local.md
+
