@@ -45,11 +45,18 @@ def _clean_env(name: str) -> str | None:
     return v or None
 
 
+def _parse_csv_ids(raw: str | None) -> list[str]:
+    """CSV(콤마 구분) UUID 문자열을 리스트로. 앞뒤 공백/빈 항목 제거."""
+    if not raw:
+        return []
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
 def main() -> int:
     token = _clean_env("NOTION_TOKEN")
     db_id = _clean_env("NOTION_DB_ID")
     summary_page_id = _clean_env("NOTION_SUMMARY_PAGE_ID")
-    mention_user_id = _clean_env("NOTION_MENTION_USER_ID")
+    mention_user_ids = _parse_csv_ids(_clean_env("NOTION_MENTION_USER_ID"))
     if not token:
         raise NotionTokenMissing("NOTION_TOKEN 환경변수 미설정")
     if not db_id:
@@ -86,7 +93,7 @@ def main() -> int:
     print(f"→ 신규 {len(new_posts)}건 · 업데이트 {len(updates)}건")
 
     added, add_fail, mention_ok, mention_fail = push_new_posts(
-        notion, ds_id, new_posts, now_iso, mention_user_id=mention_user_id
+        notion, ds_id, new_posts, now_iso, mention_user_ids=mention_user_ids
     )
     updated, upd_fail = apply_updates(notion, updates)
     unmarked, un_fail, unmarked_ntt_ids = unmark_stale_new(
@@ -96,7 +103,9 @@ def main() -> int:
     total_fail = add_fail + upd_fail + un_fail + mention_fail
     changed = added + updated + unmarked
     mention_note = (
-        f" · 멘션 {mention_ok}" if mention_user_id else " · 멘션 skip"
+        f" · 멘션 {mention_ok}(대상 {len(mention_user_ids)}명)"
+        if mention_user_ids
+        else " · 멘션 skip"
     )
     print(
         f"완료 — 추가 {added} · 업데이트 {updated} · 신규해제 {unmarked}"

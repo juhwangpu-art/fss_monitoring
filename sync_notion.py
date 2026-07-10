@@ -199,20 +199,22 @@ def build_update_props(post: dict, snap: dict, now_dt: datetime) -> dict:
 
 
 def _post_new_page_mention(
-    notion: Client, page_id: str, user_id: str, title: str, department: str
+    notion: Client, page_id: str, user_ids: list[str], title: str, department: str
 ) -> None:
     """새로 push된 페이지에 mention 코멘트 작성.
 
-    형식: `@Juhwan Lee {title} | {department} | 새글 업데이트 확인 필요`
+    형식: `@user1 @user2 … {title} | {department} | 새글 업데이트 확인 필요`
+    복수 대상이 있으면 하나의 코멘트에 모두 mention.
     """
-    body = f" {title} | {department} | 새글 업데이트 확인 필요"
-    notion.comments.create(
-        parent={"page_id": page_id},
-        rich_text=[
-            {"type": "mention", "mention": {"type": "user", "user": {"id": user_id}}},
-            {"type": "text", "text": {"content": body}},
-        ],
-    )
+    rich_text: list[dict] = []
+    for uid in user_ids:
+        rich_text.append(
+            {"type": "mention", "mention": {"type": "user", "user": {"id": uid}}}
+        )
+        rich_text.append({"type": "text", "text": {"content": " "}})
+    body = f"{title} | {department} | 새글 업데이트 확인 필요"
+    rich_text.append({"type": "text", "text": {"content": body}})
+    notion.comments.create(parent={"page_id": page_id}, rich_text=rich_text)
 
 
 def push_new_posts(
@@ -220,7 +222,7 @@ def push_new_posts(
     ds_id: str,
     posts: list[dict],
     now_iso: str,
-    mention_user_id: str | None = None,
+    mention_user_ids: list[str] | None = None,
 ) -> tuple[int, int, int, int]:
     """반환: (added, add_fail, mention_ok, mention_fail)"""
     added, failed = 0, 0
@@ -235,12 +237,12 @@ def push_new_posts(
             title = post.get("title") or ""
             print(f"  [new {i}/{len(posts)}] {title[:50]}")
 
-            if mention_user_id:
+            if mention_user_ids:
                 try:
                     _post_new_page_mention(
                         notion,
                         new_page["id"],
-                        mention_user_id,
+                        mention_user_ids,
                         title,
                         post.get("department") or "",
                     )
